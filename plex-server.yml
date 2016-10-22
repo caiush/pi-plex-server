@@ -1,0 +1,60 @@
+---
+
+- hosts: localhost
+  connection: local
+  sudo: yes
+  handlers:
+    - name: restart plex
+      service: name=plexmediaserver restart      
+    - name: restart apache
+      service: name=apache2 restart      
+  tasks:
+    - name: Create mount point
+      file: path=/mnt/synology mode=0777 owner=root state=directory
+
+    - name: Create mount point for each media library
+      file: path="/mnt/synology/{{item}}" mode=0777 owner=root state=directory
+      with_items:
+        - movies
+    
+    - name: install nfs tools
+      apt: name=nfs-common state=latest      
+    - name: install rpcbind
+      apt: name=rpcbind state=latest
+    - name: enable rpc bind
+      service: name=rpcbind state=restarted enabled=true
+    - name: Add the automounts
+      lineinfile: line="diskstation.local:/volume1/{{item}} /mnt/synology/{{item}} nfs rw,hard,intr 0 0" dest=/etc/fstab
+      with_items:
+        - movies
+
+    - name: Apt https support
+      apt: name=apt-transport-https state=latest
+    - name: Add key for plex apt repo
+      apt_key: url=https://dev2day.de/pms/dev2day-pms.gpg.key state=present validate_certs=no
+    - name: Add the plex apt server
+      apt_repository: repo="deb https://dev2day.de/pms/ jessie main" state=present
+    - name: Add the plex server
+      apt: name=plexmediaserver state=latest
+      notify: restart plex
+    - name: Install sysstat
+      apt: name=sysstat state=latest
+
+    - name: Set Hostname
+      hostname: name=plex-server
+    - name: Add etc hosts 
+      lineinfile: line="127.0.1.1     plex-server" regexp='^127\.0\.1\.1\s+(raspberrypi|plex-server)' dest="/etc/hosts"
+
+    - name: Add apache2
+      apt: name=apache2 state=latest
+    - name: Add apache modules
+      apache2_module: name="{{item}}" state=present
+      notify: restart apache
+      with_items:
+        - proxy
+        - proxy_http
+        - proxy_html
+        - rewrite
+    - name: reconfig apache2
+      template: src=000-default.conf.j2  dest=/etc/apache2/sites-available/000-default.conf owner=root mode=644
+      notify: restart apache
